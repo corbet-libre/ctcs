@@ -94,3 +94,8 @@ Its following read uses static valid owner/key identifiers and cannot fail:
 cwst performs no backend I/O in either getter, and this shared borrow cannot
 change the store's open state. The read asserts that upstream contract rather
 than retaining an unreachable second locked-store error mapping.
+
+A prepared contact journal is not an authorization lease. Publication repeats
+fresh device and outcome verification for every new event against the unchanged
+authenticated checkpoint. It does not reauthorize already accepted history.
+No companion or output is written when authority is now revoked/unavailable.

@@ -47,6 +47,20 @@ pub trait OutcomeAuthority {
     ) -> Result<(), Error>;
 }
 
+/// Use until the owning Waves adapter can verify accepted outcomes.
+pub struct UnavailableOutcomes;
+impl OutcomeAuthority for UnavailableOutcomes {
+    async fn answered(
+        &mut self,
+        _: &Binding,
+        _: &str,
+        _: &[u8; 32],
+        _: &[u8],
+    ) -> Result<(), Error> {
+        Err(Error::Authority)
+    }
+}
+
 /// A request grants no authority. Fresh control always names its exact predecessor.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -304,8 +318,9 @@ impl Candidate {
     /// Save Contacts, companion owner state and pending outputs under one version
     /// fence. Publish/ACK only after success. On ambiguous failure reopen cwst and
     /// reconcile its operation and pending outputs; never regenerate the candidate.
-    pub async fn commit<B: Backend>(
+    pub async fn commit<B: Backend, D: DeviceAuthority, O: OutcomeAuthority>(
         self,
+        authority: (&mut D, &mut O),
         store: &mut Store<B>,
         operation: [u8; 32],
         companions: &[Change<'_>],
@@ -317,6 +332,13 @@ impl Candidate {
         if store.read(OWNER, KEY).map_err(|_| Error::Storage)? != self.base.as_deref() {
             return Err(Error::Conflict);
         }
+        // A preparation is not a lease. Revalidate only newly introduced events;
+        // accepted history remains valid across device rotation or revocation.
+        let current = Contacts::load(self.journal.binding.clone(), store)
+            .expect("scope and immutable candidate base were checked above");
+        current
+            .merge(self.journal.events.clone(), authority.0, authority.1)
+            .await?;
         let mut changes = vec![];
         for c in companions {
             let owner = match c {
