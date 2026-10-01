@@ -141,6 +141,7 @@ fn lifecycle_requires_fresh_reopen_and_verified_answer() {
         let c = Contacts::load(f.binding.clone(), &store).unwrap();
         assert_eq!(c.relation("peer").unwrap().state, State::Unknown);
         assert!(c.binding() == &f.binding);
+        assert_eq!(c.version(), store.version().unwrap());
         for peer in ["", "owner"] {
             assert!(c.relation(peer).is_err());
             assert!(c.request(peer, Action::Block).is_err());
