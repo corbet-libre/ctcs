@@ -118,7 +118,13 @@ impl Fixture {
             .prepare(event, &mut self.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(store, [operation; 32], &[], &[])
+            .commit(
+                (&mut self.devices, &mut Outcomes),
+                store,
+                [operation; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap()
     }
@@ -192,7 +198,13 @@ fn lifecycle_requires_fresh_reopen_and_verified_answer() {
             .merge_journal(&duplicate, &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut store, [3; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut store,
+                [3; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         let action = answer(&f.binding, "peer", [1; 32]);
@@ -216,7 +228,13 @@ fn lifecycle_requires_fresh_reopen_and_verified_answer() {
             .merge_journal(&duplicate, &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut store, [6; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut store,
+                [6; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(c.relation("peer").unwrap().state, State::Closed);
@@ -263,7 +281,13 @@ fn concurrent_stale_reopen_and_block_converge_to_blocked_in_both_orders() {
             .merge_journal(&a.export_journal().unwrap(), &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut right, [2; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut right,
+                [2; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         let a = f.apply(&a, &mut left, "peer", Action::Block, 3).await;
@@ -284,14 +308,26 @@ fn concurrent_stale_reopen_and_block_converge_to_blocked_in_both_orders() {
             .merge_journal(&bw, &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut left, [5; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut left,
+                [5; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         let b = b
             .merge_journal(&aw, &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut right, [6; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut right,
+                [6; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(a.export_journal().unwrap(), b.export_journal().unwrap());
@@ -311,7 +347,13 @@ fn concurrent_stale_reopen_and_block_converge_to_blocked_in_both_orders() {
             .merge_journal(&bw, &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut left, [7; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut left,
+                [7; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(a.export_journal().unwrap(), b.export_journal().unwrap());
@@ -441,6 +483,7 @@ fn combined_checkpoint_fences_competing_writers_before_outputs() {
         assert!(store.load_pending().unwrap().is_empty());
         let c = a
             .commit(
+                (&mut f.devices, &mut Outcomes),
                 &mut store,
                 [1; 32],
                 &[
@@ -467,7 +510,15 @@ fn combined_checkpoint_fences_competing_writers_before_outputs() {
         );
         assert_eq!(store.load_pending().unwrap().len(), 1);
         assert_eq!(
-            b.commit(&mut stale, [2; 32], &[], &[]).await.err(),
+            b.commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut stale,
+                [2; 32],
+                &[],
+                &[]
+            )
+            .await
+            .err(),
             Some(Error::Storage)
         );
         assert_eq!(
@@ -490,6 +541,7 @@ fn combined_checkpoint_fences_competing_writers_before_outputs() {
             .unwrap();
         assert_eq!(
             x.commit(
+                (&mut f.devices, &mut Outcomes),
                 &mut store,
                 [4; 32],
                 &[Change::Delete {
@@ -504,7 +556,15 @@ fn combined_checkpoint_fences_competing_writers_before_outputs() {
         );
         let x = c.prepare(e, &mut f.devices, &mut Outcomes).await.unwrap();
         assert_eq!(
-            x.commit(&mut store, [0; 32], &[], &[]).await.err(),
+            x.commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut store,
+                [0; 32],
+                &[],
+                &[]
+            )
+            .await
+            .err(),
             Some(Error::Storage)
         );
     });
@@ -642,7 +702,13 @@ fn empty_store_scope_and_changed_checkpoint_refuse() {
             .unwrap();
         assert_eq!(
             candidate
-                .commit(&mut foreign, [1; 32], &[], &[])
+                .commit(
+                    (&mut f.devices, &mut Outcomes),
+                    &mut foreign,
+                    [1; 32],
+                    &[],
+                    &[]
+                )
                 .await
                 .err(),
             Some(Error::Scope)
@@ -652,9 +718,27 @@ fn empty_store_scope_and_changed_checkpoint_refuse() {
             .await
             .unwrap();
         let current = c.prepare(e, &mut f.devices, &mut Outcomes).await.unwrap();
-        current.commit(&mut store, [1; 32], &[], &[]).await.unwrap();
+        current
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut store,
+                [1; 32],
+                &[],
+                &[],
+            )
+            .await
+            .unwrap();
         assert_eq!(
-            stale.commit(&mut store, [2; 32], &[], &[]).await.err(),
+            stale
+                .commit(
+                    (&mut f.devices, &mut Outcomes),
+                    &mut store,
+                    [2; 32],
+                    &[],
+                    &[]
+                )
+                .await
+                .err(),
             Some(Error::Conflict)
         );
         let mut other = other;
@@ -798,7 +882,13 @@ fn bounded_union_refuses_without_discarding_existing_blocks() {
             .merge_journal(&left, &mut f.devices, &mut Outcomes)
             .await
             .unwrap()
-            .commit(&mut store, [1; 32], &[], &[])
+            .commit(
+                (&mut f.devices, &mut Outcomes),
+                &mut store,
+                [1; 32],
+                &[],
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -820,6 +910,86 @@ fn bounded_union_refuses_without_discarding_existing_blocks() {
                 .await
                 .err(),
             Some(Error::Limit)
+        );
+    });
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn publication_rechecks_device_and_outcome_authority() {
+    block_on(async {
+        let mut f = Fixture::new("alpha").await;
+        let (_, mut store) = f.store().await;
+        let contacts = Contacts::load(f.binding.clone(), &store).unwrap();
+        let event = f
+            .sign(contacts.request("peer", Action::Block).unwrap())
+            .await;
+        let candidate = contacts
+            .prepare(event, &mut f.devices, &mut Outcomes)
+            .await
+            .unwrap();
+        f.devices.unavailable = true;
+        assert_eq!(
+            candidate
+                .commit(
+                    (&mut f.devices, &mut Outcomes),
+                    &mut store,
+                    [1; 32],
+                    &[],
+                    &[Output {
+                        id: [1; 32],
+                        bytes: b"withheld".to_vec()
+                    }]
+                )
+                .await
+                .err(),
+            Some(Error::Authority)
+        );
+        assert!(store.load_pending().unwrap().is_empty());
+        assert_eq!(store.version().unwrap(), 0);
+        f.devices.unavailable = false;
+        let contacts = f
+            .apply(
+                &contacts,
+                &mut store,
+                "peer",
+                Action::Begin {
+                    conversation: [1; 32],
+                },
+                1,
+            )
+            .await;
+        let event = f
+            .sign(
+                contacts
+                    .request("peer", answer(&f.binding, "peer", [1; 32]))
+                    .unwrap(),
+            )
+            .await;
+        let candidate = contacts
+            .prepare(event, &mut f.devices, &mut Outcomes)
+            .await
+            .unwrap();
+        assert_eq!(
+            candidate
+                .commit(
+                    (&mut f.devices, &mut ctcs::UnavailableOutcomes),
+                    &mut store,
+                    [2; 32],
+                    &[],
+                    &[]
+                )
+                .await
+                .err(),
+            Some(Error::Authority)
+        );
+        assert_eq!(
+            Contacts::load(f.binding.clone(), &store)
+                .unwrap()
+                .relation("peer")
+                .unwrap()
+                .state,
+            State::Pending
         );
     });
 }
