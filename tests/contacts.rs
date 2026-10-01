@@ -1,5 +1,7 @@
 //! Real custody, signatures and encrypted checkpoint vectors, on native and Wasm.
 //! Fixture authority is explicitly not production device attestation or Waves proof.
+#[path = "support/independent_peer_convergence.rs"]
+mod independent_peer_convergence;
 mod support;
 use ckmg::{Binding, KeyHandle, Lineage};
 use ctcs::{Action, Contacts, DeviceAuthority, Error, Event, OutcomeAuthority, SignedEvent, State};
