@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, 'ci/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -27,6 +27,8 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Check committed dependency declarations and lock
+        run: python3 .github/check-first-party.py
       - uses: dtolnay/rust-toolchain@stable
       - run: |
           rustc -Vv > resolver.txt
