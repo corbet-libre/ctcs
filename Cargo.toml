@@ -1,0 +1,26 @@
+[package]
+name = "ctcs"
+version = "0.1.0"
+edition = "2024"
+license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
+description = "Community-scoped contact relationship journal"
+repository = "https://github.com/corbet-foss/ctcs"
+publish = false
+
+[dependencies]
+ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
+cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+
+[dev-dependencies]
+futures = "0.3"
+wasm-bindgen-test = "0.3"
+ed25519-dalek = "3"
+blake3 = "1"
+rand_chacha = "0.10"
+rand_core = "0.10"
+
+[lints.rust]
+unsafe_code = "forbid"
