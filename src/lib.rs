@@ -147,6 +147,10 @@ impl Contacts {
     pub fn binding(&self) -> &Binding {
         &self.journal.binding
     }
+    /// The shared Vault publication version for cross-owner candidate fencing.
+    pub fn version(&self) -> u64 {
+        self.expected
+    }
     /// The Vault must select the binding's community store. An already accepted
     /// checkpoint survives credential rotation. Every NEW event needs fresh authority.
     pub fn load<B: Backend>(binding: Binding, store: &Store<B>) -> Result<Self, Error> {

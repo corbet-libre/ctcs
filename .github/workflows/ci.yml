@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, 'ci/**']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 concurrency:
   group: ci-${{ github.repository }}
   cancel-in-progress: false
+  queue: max
 
 env:
   CARGO_BUILD_JOBS: '2'
