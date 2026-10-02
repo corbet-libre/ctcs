@@ -4,30 +4,31 @@ Community-local relationship state for the member Inbox.
 
 ## Scope
 
-Own contacts, closure, explicit fresh reopening, blocks, and the private control
-journal. Supply block rules to Board. Persist through Vault; replicate sealed
-records through Records. Peer presence is transient and stays off the forum.
+### Purpose
 
-Contacts never owns balances, MLS membership, delivery acknowledgements, identity
-issuance, cryptographic primitives, or a server contact list. A stale merge must
-never remove a block or reopen a closed contact.
+ctcs keeps the member's relation to every other member of the community — contacts, closure, reopening and blocks — as a signed, synced private journal.
 
-**States.** Unknown → Pending → Established → Closed; any relation may become
-Blocked. Reopening requires an explicit authenticated fresh event. Concurrent
-conflicting control history stays conservatively blocked.
+### Owns
 
-**Ports.** Signed control preparation and journal merge, relation and blocking-rule
-views, current device authority, verified Waves outcomes and encrypted Store.
-Transient peer reachability remains a separate proposed mechanism; the current
-journal does not manufacture presence from DHT persistence or forum rosters.
+- Relationship states and the signed control journal, merged conservatively so blocks are preserved.
+- Blocks stored on the member's devices and supplied to Board as never-match rules while online.
+- Transient peer reachability of contacts, kept off cfrm.
 
-**Invariants and tests.** A block must stop key disclosure, waves and messages and
-feed Board's online never-match rules. The forum forgets those transient rules on
-departure; member storage keeps the block. Native and actual Wasm tests cover
-cross-community isolation, stale/concurrent reopen, receipt replay, and atomic
-publication with fresh device/outcome checks. Network restore and presence require
-the real owner adapters. Journal record packing must compress and pad before
-Records encrypts; a server never retains a contact graph.
+### Never
+
+- No balances, MLS roster, or delivery acknowledgements.
+- No contact graph on cfrm.
+- No generic last-write-wins merge that could remove a block.
+
+### States
+
+Unknown → Pending → Established → Closed; any relation may become Blocked; reopening needs an explicit authenticated fresh event.
+
+### Test obligations
+
+- A block at once stops key release, waves and messages and appears in online never-match rules; the forum forgets the rules on departure and member storage keeps them.
+- A concurrent stale unblock or reopen is refused; idempotent receipts do not reopen a closed contact; the same identity bytes in another community are a separate relation.
+- Full line and branch coverage with real round trips and injected delay, duplication, loss, cancellation, clock regression, corruption and storage conflicts; atomic publication with reconciliation of unknown outcomes; per-community isolation; bounded inputs with errors omitting identifiers and secrets; maintained third-party cryptography only.
 
 ## Implementation and dependencies
 
