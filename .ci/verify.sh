@@ -39,7 +39,23 @@ export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
 export WASM_BINDGEN_USE_BROWSER=1 WASM_BINDGEN_TEST_TIMEOUT=60
 cargo test --locked --target wasm32-unknown-unknown --test contacts
 rustup run nightly rustc --version
+NIGHTLY_RUSTC="$(rustup which --toolchain nightly rustc)"
 NIGHTLY_CARGO="$(rustup which --toolchain nightly cargo)"
+NIGHTLY_BIN="$(dirname "$NIGHTLY_RUSTC")"
+export RUSTC="$NIGHTLY_RUSTC"
+export CARGO="$NIGHTLY_CARGO"
+export PATH="$NIGHTLY_BIN:$PATH"
+export RUSTUP_TOOLCHAIN=nightly
 "$NIGHTLY_CARGO" llvm-cov --version
+# Bug 2 isolation: coverage data must not reuse the shared cargo target
+# across jobs (stale checkout paths fail the next gate); scope the
+# coverage target to this job only. Native gates keep the shared warm
+# target; outer traps and services are untouched.
+(
+coverage_target="$(mktemp -d)"
+case "$coverage_target" in ""|"$PWD"/*) echo 'unsafe coverage target' >&2; exit 2;; esac
+trap 'rm -rf -- "$coverage_target"' EXIT
+export CARGO_TARGET_DIR="$coverage_target"
 "$NIGHTLY_CARGO" llvm-cov --locked --branch --json --output-path coverage.json --ignore-filename-regex '/tests/'
+)
 python3 .github/check-coverage.py coverage.json
