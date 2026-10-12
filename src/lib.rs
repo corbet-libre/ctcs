@@ -326,19 +326,7 @@ impl Candidate {
         companions: &[Change<'_>],
         outputs: &[Output],
     ) -> Result<Contacts, Error> {
-        if !store.is_scope(self.journal.binding.community()) {
-            return Err(Error::Scope);
-        }
-        if store.read(OWNER, KEY).map_err(|_| Error::Storage)? != self.base.as_deref() {
-            return Err(Error::Conflict);
-        }
-        // A preparation is not a lease. Revalidate only newly introduced events;
-        // accepted history remains valid across device rotation or revocation.
-        let current = Contacts::load(self.journal.binding.clone(), store)
-            .expect("scope and immutable candidate base were checked above");
-        current
-            .merge(self.journal.events.clone(), authority.0, authority.1)
-            .await?;
+        let staged = self.stage(authority, store).await?;
         let mut changes = vec![];
         for c in companions {
             let owner = match c {
@@ -352,20 +340,68 @@ impl Candidate {
                 Change::Delete { owner, key } => Change::Delete { owner, key },
             });
         }
-        changes.push(Change::Put {
+        changes.push(staged.change());
+        let version = store
+            .commit(staged.expected, operation, &changes, outputs)
+            .await
+            .map_err(|_| Error::Storage)?;
+        Ok(staged.finish(version))
+    }
+    /// Run every check `commit` runs without writing. The caller commits
+    /// `Staged::change` with companion owners' changes and outputs in ONE Store
+    /// transaction at `Staged::expected`, then calls `Staged::finish`.
+    pub async fn stage<B: Backend, D: DeviceAuthority, O: OutcomeAuthority>(
+        self,
+        authority: (&mut D, &mut O),
+        store: &Store<B>,
+    ) -> Result<Staged, Error> {
+        if !store.is_scope(self.journal.binding.community()) {
+            return Err(Error::Scope);
+        }
+        if store.read(OWNER, KEY).map_err(|_| Error::Storage)? != self.base.as_deref() {
+            return Err(Error::Conflict);
+        }
+        // A preparation is not a lease. Revalidate only newly introduced events;
+        // accepted history remains valid across device rotation or revocation.
+        let current = Contacts::load(self.journal.binding.clone(), store)
+            .expect("scope and immutable candidate base were checked above");
+        current
+            .merge(self.journal.events.clone(), authority.0, authority.1)
+            .await?;
+        Ok(Staged {
+            journal: self.journal,
+            bytes: self.bytes,
+            expected: self.expected,
+        })
+    }
+}
+/// A fully checked Contacts change that has not been written. Dropping it
+/// publishes nothing.
+pub struct Staged {
+    journal: Journal,
+    bytes: Vec<u8>,
+    expected: u64,
+}
+impl Staged {
+    /// The Store version the shared transaction must be fenced at.
+    pub fn expected(&self) -> u64 {
+        self.expected
+    }
+    /// This owner's change for the shared transaction.
+    pub fn change(&self) -> Change<'_> {
+        Change::Put {
             owner: OWNER,
             key: KEY,
             value: &self.bytes,
-        });
-        let expected = store
-            .commit(self.expected, operation, &changes, outputs)
-            .await
-            .map_err(|_| Error::Storage)?;
-        Ok(Contacts {
+        }
+    }
+    /// Adopt the version returned by the shared transaction.
+    pub fn finish(self, version: u64) -> Contacts {
+        Contacts {
             journal: self.journal,
-            expected,
+            expected: version,
             base: Some(self.bytes),
-        })
+        }
     }
 }
 fn peer_binding(binding: &Binding, peer: &str) -> Result<(), Error> {
