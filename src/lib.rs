@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_EVENTS: usize = 1024;
 pub const MAX_BYTES: usize = 1024 * 1024;
 pub const MAX_EVIDENCE: usize = 4096;
+/// Largest opaque peer lineage-record handle.
+pub const MAX_HANDLE: usize = 1024;
 const OWNER: &str = "ctcs";
 const KEY: &[u8] = b"journal.v1";
 
@@ -25,12 +27,14 @@ pub enum Error {
     Transition,
     Conflict,
     Storage,
+    /// Required evidence is missing, unreadable or stale; never permissive.
+    Unavailable,
 }
 
 #[allow(async_fn_in_trait)]
 pub trait DeviceAuthority {
     /// Independently authenticated CURRENT lineage, exact epoch and revocation.
-    /// Refuse unavailable freshness. A self-signature alone is insufficient.
+    /// Refuse unavailable freshness with `Unavailable`; `Authority` is for present, negative evidence. A self-signature alone is insufficient.
     async fn current(&mut self, binding: &Binding) -> Result<Lineage, Error>;
 }
 #[allow(async_fn_in_trait)]
@@ -76,6 +80,12 @@ pub enum Action {
     Block,
     Reopen {
         conversation: [u8; 32],
+    },
+    /// Retain the peer's lineage-record handle. The caller verifies the source
+    /// (signed first-contact request, or an announcement signed under the peer's
+    /// current lineage) BEFORE requesting this; the journal only retains it.
+    Handle {
+        handle: Vec<u8>,
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -194,6 +204,22 @@ impl Contacts {
     pub fn relation(&self, peer: &str) -> Result<Relation, Error> {
         peer_binding(&self.journal.binding, peer)?;
         Ok(fold(&self.journal, peer)?.0)
+    }
+    /// The newest retained lineage-record handle of `peer`, if any.
+    pub fn handle(&self, peer: &str) -> Result<Option<Vec<u8>>, Error> {
+        peer_binding(&self.journal.binding, peer)?;
+        fold(&self.journal, peer)?;
+        Ok(self
+            .journal
+            .events
+            .iter()
+            .filter(|e| e.event.peer == peer)
+            .filter_map(|e| match &e.event.action {
+                Action::Handle { handle } => Some((e.event.revision, handle)),
+                _ => None,
+            })
+            .max_by_key(|(revision, _)| *revision)
+            .map(|(_, handle)| handle.clone()))
     }
     /// Supply these peer IDs to Board's online never-match rules. Forum expiry is
     /// Board's job; the encrypted journal retains the controls across departure.
@@ -425,6 +451,11 @@ fn shape(e: &Event) -> Result<(), Error> {
             }
         }
         Action::Close | Action::Block => {}
+        Action::Handle { handle } => {
+            if handle.is_empty() || handle.len() > MAX_HANDLE {
+                return Err(Error::Limit);
+            }
+        }
     }
     if let Action::Answered { evidence, .. } = &e.action
         && (evidence.is_empty() || evidence.len() > MAX_EVIDENCE)
@@ -511,6 +542,11 @@ fn transition(j: &Journal, e: &Event, mut state: Relation) -> Result<Relation, E
     }
     match &e.action {
         Action::Block => state.state = State::Blocked,
+        Action::Handle { .. } => {
+            if !matches!(state.state, State::Pending | State::Established) {
+                return Err(Error::Transition);
+            }
+        }
         Action::Close => {
             if state.state != State::Blocked {
                 state.state = State::Closed;
