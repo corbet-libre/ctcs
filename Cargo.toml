@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
 description = "Community-scoped contact relationship journal"
-repository = "https://github.com/corbet-foss/ctcs"
+repository = "https://git.corbet.ch/corbet-foss/ctcs.git"
 publish = false
 
 [dependencies]
-ckmg = { git = "https://github.com/corbet-foss/ckmg", branch = "main" }
-cwst = { git = "https://github.com/corbet-foss/cwst", branch = "main" }
+ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg.git", branch = "v01" }
+cwst = { git = "https://git.corbet.ch/corbet-foss/cwst.git", branch = "v01" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"

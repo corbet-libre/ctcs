@@ -995,3 +995,37 @@ fn publication_rechecks_device_and_outcome_authority() {
         );
     });
 }
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn peer_record_handle_is_retained_replaced_and_bounded() {
+    block_on(async {
+        let mut f = Fixture::new("alpha").await;
+        let (_backend, mut store) = f.store().await;
+        let c = Contacts::load(f.binding.clone(), &store).unwrap();
+        let handle = |h: &[u8]| Action::Handle { handle: h.to_vec() };
+        // No handle before first contact, and none can be recorded for an unknown peer.
+        assert_eq!(c.handle("peer").unwrap(), None);
+        assert!(c.request("peer", handle(b"one")).is_err());
+        let begin = Action::Begin {
+            conversation: [1; 32],
+        };
+        let c = f.apply(&c, &mut store, "peer", begin, 1).await;
+        let c = f.apply(&c, &mut store, "peer", handle(b"one"), 2).await;
+        assert_eq!(c.handle("peer").unwrap().as_deref(), Some(&b"one"[..]));
+        // A later verified announcement replaces it; the newest revision wins.
+        let c = f.apply(&c, &mut store, "peer", handle(b"two"), 3).await;
+        assert_eq!(c.handle("peer").unwrap().as_deref(), Some(&b"two"[..]));
+        assert_eq!(c.relation("peer").unwrap().state, State::Pending);
+        assert_eq!(c.handle("other").unwrap(), None);
+        assert!(c.request("peer", handle(b"")).is_err());
+        assert!(
+            c.request("peer", handle(&vec![0; ctcs::MAX_HANDLE + 1]))
+                .is_err()
+        );
+        // A blocked relation retains no new handle.
+        let c = f.apply(&c, &mut store, "peer", Action::Block, 4).await;
+        assert!(c.request("peer", handle(b"three")).is_err());
+        assert_eq!(c.handle("peer").unwrap().as_deref(), Some(&b"two"[..]));
+    })
+}

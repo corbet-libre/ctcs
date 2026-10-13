@@ -12,6 +12,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_EVENTS: usize = 1024;
 pub const MAX_BYTES: usize = 1024 * 1024;
 pub const MAX_EVIDENCE: usize = 4096;
+/// Largest opaque peer lineage-record handle.
+pub const MAX_HANDLE: usize = 1024;
 const OWNER: &str = "ctcs";
 const KEY: &[u8] = b"journal.v1";
 
@@ -25,12 +27,14 @@ pub enum Error {
     Transition,
     Conflict,
     Storage,
+    /// Required evidence is missing, unreadable or stale; never permissive.
+    Unavailable,
 }
 
 #[allow(async_fn_in_trait)]
 pub trait DeviceAuthority {
     /// Independently authenticated CURRENT lineage, exact epoch and revocation.
-    /// Refuse unavailable freshness. A self-signature alone is insufficient.
+    /// Refuse unavailable freshness with `Unavailable`; `Authority` is for present, negative evidence. A self-signature alone is insufficient.
     async fn current(&mut self, binding: &Binding) -> Result<Lineage, Error>;
 }
 #[allow(async_fn_in_trait)]
@@ -76,6 +80,12 @@ pub enum Action {
     Block,
     Reopen {
         conversation: [u8; 32],
+    },
+    /// Retain the peer's lineage-record handle. The caller verifies the source
+    /// (signed first-contact request, or an announcement signed under the peer's
+    /// current lineage) BEFORE requesting this; the journal only retains it.
+    Handle {
+        handle: Vec<u8>,
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -194,6 +204,22 @@ impl Contacts {
     pub fn relation(&self, peer: &str) -> Result<Relation, Error> {
         peer_binding(&self.journal.binding, peer)?;
         Ok(fold(&self.journal, peer)?.0)
+    }
+    /// The newest retained lineage-record handle of `peer`, if any.
+    pub fn handle(&self, peer: &str) -> Result<Option<Vec<u8>>, Error> {
+        peer_binding(&self.journal.binding, peer)?;
+        fold(&self.journal, peer)?;
+        Ok(self
+            .journal
+            .events
+            .iter()
+            .filter(|e| e.event.peer == peer)
+            .filter_map(|e| match &e.event.action {
+                Action::Handle { handle } => Some((e.event.revision, handle)),
+                _ => None,
+            })
+            .max_by_key(|(revision, _)| *revision)
+            .map(|(_, handle)| handle.clone()))
     }
     /// Supply these peer IDs to Board's online never-match rules. Forum expiry is
     /// Board's job; the encrypted journal retains the controls across departure.
@@ -326,19 +352,7 @@ impl Candidate {
         companions: &[Change<'_>],
         outputs: &[Output],
     ) -> Result<Contacts, Error> {
-        if !store.is_scope(self.journal.binding.community()) {
-            return Err(Error::Scope);
-        }
-        if store.read(OWNER, KEY).map_err(|_| Error::Storage)? != self.base.as_deref() {
-            return Err(Error::Conflict);
-        }
-        // A preparation is not a lease. Revalidate only newly introduced events;
-        // accepted history remains valid across device rotation or revocation.
-        let current = Contacts::load(self.journal.binding.clone(), store)
-            .expect("scope and immutable candidate base were checked above");
-        current
-            .merge(self.journal.events.clone(), authority.0, authority.1)
-            .await?;
+        let staged = self.stage(authority, store).await?;
         let mut changes = vec![];
         for c in companions {
             let owner = match c {
@@ -352,20 +366,68 @@ impl Candidate {
                 Change::Delete { owner, key } => Change::Delete { owner, key },
             });
         }
-        changes.push(Change::Put {
+        changes.push(staged.change());
+        let version = store
+            .commit(staged.expected, operation, &changes, outputs)
+            .await
+            .map_err(|_| Error::Storage)?;
+        Ok(staged.finish(version))
+    }
+    /// Run every check `commit` runs without writing. The caller commits
+    /// `Staged::change` with companion owners' changes and outputs in ONE Store
+    /// transaction at `Staged::expected`, then calls `Staged::finish`.
+    pub async fn stage<B: Backend, D: DeviceAuthority, O: OutcomeAuthority>(
+        self,
+        authority: (&mut D, &mut O),
+        store: &Store<B>,
+    ) -> Result<Staged, Error> {
+        if !store.is_scope(self.journal.binding.community()) {
+            return Err(Error::Scope);
+        }
+        if store.read(OWNER, KEY).map_err(|_| Error::Storage)? != self.base.as_deref() {
+            return Err(Error::Conflict);
+        }
+        // A preparation is not a lease. Revalidate only newly introduced events;
+        // accepted history remains valid across device rotation or revocation.
+        let current = Contacts::load(self.journal.binding.clone(), store)
+            .expect("scope and immutable candidate base were checked above");
+        current
+            .merge(self.journal.events.clone(), authority.0, authority.1)
+            .await?;
+        Ok(Staged {
+            journal: self.journal,
+            bytes: self.bytes,
+            expected: self.expected,
+        })
+    }
+}
+/// A fully checked Contacts change that has not been written. Dropping it
+/// publishes nothing.
+pub struct Staged {
+    journal: Journal,
+    bytes: Vec<u8>,
+    expected: u64,
+}
+impl Staged {
+    /// The Store version the shared transaction must be fenced at.
+    pub fn expected(&self) -> u64 {
+        self.expected
+    }
+    /// This owner's change for the shared transaction.
+    pub fn change(&self) -> Change<'_> {
+        Change::Put {
             owner: OWNER,
             key: KEY,
             value: &self.bytes,
-        });
-        let expected = store
-            .commit(self.expected, operation, &changes, outputs)
-            .await
-            .map_err(|_| Error::Storage)?;
-        Ok(Contacts {
+        }
+    }
+    /// Adopt the version returned by the shared transaction.
+    pub fn finish(self, version: u64) -> Contacts {
+        Contacts {
             journal: self.journal,
-            expected,
+            expected: version,
             base: Some(self.bytes),
-        })
+        }
     }
 }
 fn peer_binding(binding: &Binding, peer: &str) -> Result<(), Error> {
@@ -389,6 +451,11 @@ fn shape(e: &Event) -> Result<(), Error> {
             }
         }
         Action::Close | Action::Block => {}
+        Action::Handle { handle } => {
+            if handle.is_empty() || handle.len() > MAX_HANDLE {
+                return Err(Error::Limit);
+            }
+        }
     }
     if let Action::Answered { evidence, .. } = &e.action
         && (evidence.is_empty() || evidence.len() > MAX_EVIDENCE)
@@ -475,6 +542,11 @@ fn transition(j: &Journal, e: &Event, mut state: Relation) -> Result<Relation, E
     }
     match &e.action {
         Action::Block => state.state = State::Blocked,
+        Action::Handle { .. } => {
+            if !matches!(state.state, State::Pending | State::Established) {
+                return Err(Error::Transition);
+            }
+        }
         Action::Close => {
             if state.state != State::Blocked {
                 state.state = State::Closed;
