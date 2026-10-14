@@ -78,6 +78,13 @@ pub enum Action {
     },
     Close,
     Block,
+    /// Established by voucher admission: both sides already consented (the issuer
+    /// by issuing or signing off the link, the newcomer by redeeming it). The
+    /// conversation id is [`voucher_conversation`], derived from the bond secret
+    /// both devices hold; the secret itself is never stored.
+    Voucher {
+        conversation: [u8; 32],
+    },
     Reopen {
         conversation: [u8; 32],
     },
@@ -119,6 +126,18 @@ pub struct SignedEvent {
     event: Event,
     certificate: KeyCertificate,
     signature: Signature,
+}
+/// The conversation id both devices derive from the voucher bond secret and the
+/// two members' ids (order does not matter). Only this id enters the journal.
+pub fn voucher_conversation(bond: &[u8; 32], first: &str, second: &str) -> [u8; 32] {
+    let (low, high) = if first <= second { (first, second) } else { (second, first) };
+    let mut bytes = b"ctcs.voucher.v1".to_vec();
+    bytes.extend_from_slice(bond);
+    for id in [low, high] {
+        bytes.extend_from_slice(&(id.len() as u64).to_be_bytes());
+        bytes.extend_from_slice(id.as_bytes());
+    }
+    *ckmg::hash(&bytes).value()
 }
 /// Narrow device key purpose for this journal only.
 pub fn purpose() -> Purpose {
@@ -444,6 +463,7 @@ fn shape(e: &Event) -> Result<(), Error> {
     peer_binding(&e.binding, &e.peer)?;
     match &e.action {
         Action::Begin { conversation }
+        | Action::Voucher { conversation }
         | Action::Reopen { conversation }
         | Action::Answered { conversation, .. } => {
             if *conversation == [0; 32] {
@@ -557,6 +577,18 @@ fn transition(j: &Journal, e: &Event, mut state: Relation) -> Result<Relation, E
                 return Err(Error::Transition);
             }
             state.state = State::Pending;
+            state.conversation = Some(*conversation);
+        }
+        Action::Voucher { conversation } => {
+            // Only a relation that is not blocked or closed: a block or close the
+            // member chose is never undone by an admission; Reopen is the way back.
+            let fresh = state.state == State::Unknown;
+            let same = matches!(state.state, State::Pending | State::Established)
+                && state.conversation == Some(*conversation);
+            if !(fresh || same) {
+                return Err(Error::Transition);
+            }
+            state.state = State::Established;
             state.conversation = Some(*conversation);
         }
         Action::Reopen { conversation } => {

@@ -1029,3 +1029,33 @@ fn peer_record_handle_is_retained_replaced_and_bounded() {
         assert_eq!(c.handle("peer").unwrap().as_deref(), Some(&b"two"[..]));
     })
 }
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn voucher_admission_establishes_once_and_never_undoes_a_block() {
+    block_on(async {
+        let mut f = Fixture::new("alpha").await;
+        let (_backend, mut store) = f.store().await;
+        let c = Contacts::load(f.binding.clone(), &store).unwrap();
+        let bond = [7u8; 32];
+        // Both sides derive the same id whatever the order of the two member ids.
+        let id = ctcs::voucher_conversation(&bond, "sponsor", "newcomer");
+        assert_eq!(id, ctcs::voucher_conversation(&bond, "newcomer", "sponsor"));
+        assert_ne!(id, ctcs::voucher_conversation(&[8; 32], "sponsor", "newcomer"));
+        assert_ne!(id, ctcs::voucher_conversation(&bond, "sponsor", "other"));
+        assert!(c.request("peer", Action::Voucher { conversation: [0; 32] }).is_err());
+        let c = f
+            .apply(&c, &mut store, "peer", Action::Voucher { conversation: id }, 1)
+            .await;
+        let relation = c.relation("peer").unwrap();
+        assert_eq!(relation.state, State::Established);
+        assert_eq!(relation.conversation, Some(id));
+        // Repeating the same admission is harmless; another conversation is not.
+        assert!(c.request("peer", Action::Voucher { conversation: id }).is_ok());
+        assert!(c.request("peer", Action::Voucher { conversation: [9; 32] }).is_err());
+        // A block the member chose stays; only Reopen is the way back.
+        let c = f.apply(&c, &mut store, "peer", Action::Block, 2).await;
+        assert_eq!(c.relation("peer").unwrap().state, State::Blocked);
+        assert!(c.request("peer", Action::Voucher { conversation: id }).is_err());
+    });
+}
