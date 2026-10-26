@@ -130,7 +130,11 @@ pub struct SignedEvent {
 /// The conversation id both devices derive from the voucher bond secret and the
 /// two members' ids (order does not matter). Only this id enters the journal.
 pub fn voucher_conversation(bond: &[u8; 32], first: &str, second: &str) -> [u8; 32] {
-    let (low, high) = if first <= second { (first, second) } else { (second, first) };
+    let (low, high) = if first <= second {
+        (first, second)
+    } else {
+        (second, first)
+    };
     let mut bytes = b"ctcs.voucher.v1".to_vec();
     bytes.extend_from_slice(bond);
     for id in [low, high] {

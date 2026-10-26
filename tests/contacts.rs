@@ -1041,21 +1041,52 @@ fn voucher_admission_establishes_once_and_never_undoes_a_block() {
         // Both sides derive the same id whatever the order of the two member ids.
         let id = ctcs::voucher_conversation(&bond, "sponsor", "newcomer");
         assert_eq!(id, ctcs::voucher_conversation(&bond, "newcomer", "sponsor"));
-        assert_ne!(id, ctcs::voucher_conversation(&[8; 32], "sponsor", "newcomer"));
+        assert_ne!(
+            id,
+            ctcs::voucher_conversation(&[8; 32], "sponsor", "newcomer")
+        );
         assert_ne!(id, ctcs::voucher_conversation(&bond, "sponsor", "other"));
-        assert!(c.request("peer", Action::Voucher { conversation: [0; 32] }).is_err());
+        assert!(
+            c.request(
+                "peer",
+                Action::Voucher {
+                    conversation: [0; 32]
+                }
+            )
+            .is_err()
+        );
         let c = f
-            .apply(&c, &mut store, "peer", Action::Voucher { conversation: id }, 1)
+            .apply(
+                &c,
+                &mut store,
+                "peer",
+                Action::Voucher { conversation: id },
+                1,
+            )
             .await;
         let relation = c.relation("peer").unwrap();
         assert_eq!(relation.state, State::Established);
         assert_eq!(relation.conversation, Some(id));
         // Repeating the same admission is harmless; another conversation is not.
-        assert!(c.request("peer", Action::Voucher { conversation: id }).is_ok());
-        assert!(c.request("peer", Action::Voucher { conversation: [9; 32] }).is_err());
+        assert!(
+            c.request("peer", Action::Voucher { conversation: id })
+                .is_ok()
+        );
+        assert!(
+            c.request(
+                "peer",
+                Action::Voucher {
+                    conversation: [9; 32]
+                }
+            )
+            .is_err()
+        );
         // A block the member chose stays; only Reopen is the way back.
         let c = f.apply(&c, &mut store, "peer", Action::Block, 2).await;
         assert_eq!(c.relation("peer").unwrap().state, State::Blocked);
-        assert!(c.request("peer", Action::Voucher { conversation: id }).is_err());
+        assert!(
+            c.request("peer", Action::Voucher { conversation: id })
+                .is_err()
+        );
     });
 }
